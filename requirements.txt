@@ -1,0 +1,18 @@
+# Guardian System Dependencies
+# Core requirements
+psutil>=5.9.0
+
+# Optional: For advanced Windows features
+wmi>=1.5.1
+
+# Optional: For HTTP requests and network monitoring
+requests>=2.28.0
+
+# Optional: For database storage (PostgreSQL)
+psycopg2-binary>=2.9.0
+
+# Optional: For vector similarity search
+qdrant-client>=1.7.0
+
+# Optional: For better JSON handling
+orjson>=3.9.0

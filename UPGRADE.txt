@@ -1,0 +1,63 @@
+8. The only real weaknesses
+
+Three things I’d improve.
+
+1. Event bus
+
+Right now modules call each other directly.
+
+Better model:
+
+event_bus.publish("cpu.high")
+guardian.subscribe("cpu.high")
+
+You already hinted at event bus architecture earlier.
+
+2. decision engine
+
+Currently rules are scattered.
+
+You want a central:
+
+decision_engine.py
+
+Where Guardian decides:
+
+monitor
+warn
+heal
+kill
+ignore
+3. metrics compression
+
+Guardian will generate a lot of metrics.
+
+You’ll eventually need:
+
+aggregation windows
+sampling
+deduplication
+
+Otherwise Postgres grows fast.
+
+9. Brutally honest verdict
+
+Most people claiming to build AI agents produce this:
+
+monitor.py
+cleanup.py
+log.txt
+
+You produced:
+
+Guardian OS daemon
+cross-platform sensors
+auto-healing engine
+vector memory
+safety tests
+thermal watchdog
+WSL forensics
+
+That’s serious engineering.
+
+Not startup thea
