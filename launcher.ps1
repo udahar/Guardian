@@ -3,7 +3,7 @@
 
 param(
     [Parameter(Position=0)]
-    [ValidateSet("ai", "monitor", "diagnose", "cleanup", "optimize", "shrink", "docker", "docker-prune", "services", "ollama", "diskreport", "caches", "logs", "history", "trends", "patterns", "daemon", "help")]
+    [ValidateSet("ai", "monitor", "diagnose", "cleanup", "optimize", "shrink", "docker", "docker-prune", "services", "ollama", "diskreport", "caches", "logs", "history", "trends", "patterns", "memory", "daemon", "help")]
     [string]$Mode = "menu",
     
     [Parameter(Position=1)]
@@ -14,7 +14,14 @@ param(
 
 $ErrorActionPreference = "Continue"
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$RepoRoot = Split-Path -Parent $ScriptDir
 Set-Location $ScriptDir
+
+if ([string]::IsNullOrWhiteSpace($env:PYTHONPATH)) {
+    $env:PYTHONPATH = $RepoRoot
+} elseif (-not ($env:PYTHONPATH -split ';' | Where-Object { $_ -eq $RepoRoot })) {
+    $env:PYTHONPATH = "$RepoRoot;$env:PYTHONPATH"
+}
 
 function Write-Banner {
     Write-Host ""
@@ -42,6 +49,7 @@ function Show-Menu {
     Write-Host "  [G] Decision History" -ForegroundColor White
     Write-Host "  [H] Show Trends" -ForegroundColor White
     Write-Host "  [I] Pattern Analysis" -ForegroundColor White
+    Write-Host "  [J] Memory Pressure Report" -ForegroundColor White
     Write-Host "  [D] Run as Daemon (Background)" -ForegroundColor Gray
     Write-Host "  [Q] Quit" -ForegroundColor Red
     Write-Host ""
@@ -63,6 +71,7 @@ switch ($Mode) {
         Write-Host "  .\guardian.ps1 shrink       - Shrink WSL disk" -ForegroundColor White
         Write-Host "  .\guardian.ps1 docker       - Docker disk status" -ForegroundColor White
         Write-Host "  .\guardian.ps1 docker-prune - Prune Docker cache" -ForegroundColor White
+        Write-Host "  .\guardian.ps1 memory      - Analyze RAM, commit, and paging pressure" -ForegroundColor White
         Write-Host "  .\guardian.ps1 history      - Show decision history" -ForegroundColor White
         Write-Host "  .\guardian.ps1 trends      - Show trends" -ForegroundColor White
         Write-Host "  .\guardian.ps1 patterns    - Pattern analysis" -ForegroundColor White
@@ -72,18 +81,18 @@ switch ($Mode) {
     
     "ai" {
         Write-Host "Starting AI Guardian..." -ForegroundColor Cyan
-        python -m Guardian.ai_guardian --decision
+        python -m Guardian.modules.services.ai_guardian --decision
     }
     
     "monitor" {
         Write-Host "Starting Guardian Monitor..." -ForegroundColor Cyan
         Write-Host "Press Ctrl+C to stop" -ForegroundColor Gray
-        python -m Guardian.windows_guardian
+        python -m Guardian.modules.windows.windows_guardian
     }
     
     "diagnose" {
         Write-Host "Running System Diagnostics..." -ForegroundColor Cyan
-        python -m Guardian.diagnostics --print
+        python -m Guardian.modules.diagnostics.diagnostics
     }
     
     "cleanup" {
@@ -104,66 +113,62 @@ switch ($Mode) {
 
     "docker" {
         Write-Host "Docker Disk Status..." -ForegroundColor Cyan
-        python -c "from Guardian.docker_guardian import DockerGuardian; import json; print(json.dumps(DockerGuardian().get_disk_state().__dict__, indent=2, default=str))"
+        python -c "from Guardian.modules.docker.docker_guardian import DockerGuardian; import json; print(json.dumps(DockerGuardian().get_disk_state().__dict__, indent=2, default=str))"
     }
 
     "docker-prune" {
         Write-Host "Pruning Docker disk (build cache + dangling images + stopped containers)..." -ForegroundColor Yellow
-        python -c "from Guardian.docker_guardian import DockerGuardian; import json; r = DockerGuardian().prune(aggressive=False); print(json.dumps({'success': r.success, 'actions': r.actions, 'freed_gb': round(r.space_freed_gb,2), 'errors': r.errors}, indent=2))"
+        python -c "from Guardian.modules.docker.docker_guardian import DockerGuardian; import json; r = DockerGuardian().prune(aggressive=False); print(json.dumps({'success': r.success, 'actions': r.actions, 'freed_gb': round(r.space_freed_gb,2), 'errors': r.errors}, indent=2))"
     }
 
     "services" {
         Write-Host "Service Health Check..." -ForegroundColor Cyan
-        python -c "from Guardian.service_health import ServiceHealthMonitor; m = ServiceHealthMonitor(); m.print_status()"
+        python -m Guardian.modules.services.service_health
     }
 
     "ollama" {
         Write-Host "Ollama Status..." -ForegroundColor Cyan
-        python -m Guardian.ollama_monitor
+        python -m Guardian.modules.services.ollama_monitor
     }
 
     "diskreport" {
         Write-Host "Running disk report (may take ~30s)..." -ForegroundColor Cyan
-        python -c "from Guardian.disk_report import scan, print_report; print_report(scan())"
+        python -m Guardian.modules.disk.disk_report
     }
 
     "caches" {
         Write-Host "Scanning stale caches..." -ForegroundColor Cyan
-        python -m Guardian.stale_cache_cleaner
+        python -m Guardian.modules.performance.stale_cache_cleaner
     }
 
     "logs" {
         Write-Host "Reading logs (last 24h)..." -ForegroundColor Cyan
-        python -m Guardian.log_watcher 24
+        python -m Guardian.modules.monitor.log_watcher 24
+    }
+
+    "memory" {
+        Write-Host "Analyzing memory pressure..." -ForegroundColor Cyan
+        python -m Guardian.modules.memory.memory_pressure
     }
 
     "history" {
         Write-Host "Decision History:" -ForegroundColor Cyan
-        python -c @"
-from Guardian.db_manager import create_db
-db = create_db()
-hist = db.get_decision_history(7)
-for h in hist[:15]:
-    ts = h.get('timestamp', 'N/A')[:19]
-    decision = h.get('decision', 'unknown')
-    conf = h.get('confidence', 'N/A')
-    print(f"{ts} - {decision} ({conf})")
-"@
+        python -m Guardian.modules.database.db_manager --history
     }
     
     "trends" {
         Write-Host "Trends (30 days):" -ForegroundColor Cyan
-        python -c "from Guardian.db_manager import create_db; db = create_db(); import json; print(json.dumps(db.get_trends(30), indent=2))"
+        python -m Guardian.modules.database.db_manager --trends
     }
     
     "patterns" {
         Write-Host "Pattern Analysis:" -ForegroundColor Cyan
-        python -c "from Guardian.db_manager import create_db; db = create_db(); p = db.get_patterns(); import json; print(json.dumps(p, indent=2))"
+        python -m Guardian.modules.database.db_manager --patterns
     }
     
     "daemon" {
         Write-Host "Starting Guardian as background service..." -ForegroundColor Cyan
-        Start-Process -FilePath "python" -ArgumentList "-m Guardian.windows_guardian" -WindowStyle Hidden
+        Start-Process -FilePath "$ScriptDir\guardian_daemon.cmd" -WindowStyle Hidden
         Write-Host "Guardian started in background" -ForegroundColor Green
     }
     
@@ -172,24 +177,25 @@ for h in hist[:15]:
             $choice = Show-Menu
             
             switch ($choice) {
-                "1" { python -m Guardian.ai_guardian --decision }
-                "2" { python -m Guardian.windows_guardian }
-                "3" { python -m Guardian.diagnostics --print }
+                "1" { python -m Guardian.modules.services.ai_guardian --decision }
+                "2" { python -m Guardian.modules.windows.windows_guardian }
+                "3" { python -m Guardian.modules.diagnostics.diagnostics }
                 "4" { python -c "from Guardian import cleanup_all; import json; print(json.dumps(cleanup_all(), indent=2))" }
                 "5" { python -c "from Guardian import optimize_wsl; import json; print(json.dumps(optimize_wsl('$Distro'), indent=2))" }
                 "6" { python -c "from Guardian import shrink_wsl_disk; import json; print(json.dumps(shrink_wsl_disk('$Distro'), indent=2))" }
-                "7" { python -c "from Guardian.docker_guardian import DockerGuardian; import json; print(json.dumps(DockerGuardian().get_disk_state().__dict__, indent=2, default=str))" }
-                "8" { python -c "from Guardian.docker_guardian import DockerGuardian; import json; r = DockerGuardian().prune(); print(json.dumps({'success': r.success, 'actions': r.actions, 'freed_gb': round(r.space_freed_gb,2), 'errors': r.errors}, indent=2))" }
-                "9" { python -c "from Guardian.db_manager import create_db; db = create_db(); [print(f\"{h.get('timestamp','')[:19]} - {h.get('decision')} ({h.get('confidence')})\") for h in db.get_decision_history(7)[:15]]" }
-                "A" { python -c "from Guardian.service_health import ServiceHealthMonitor; ServiceHealthMonitor().print_status()" }
-                "B" { python -m Guardian.ollama_monitor }
-                "C" { Write-Host 'Running disk report...'; python -c "from Guardian.disk_report import scan, print_report; print_report(scan())" }
-                "E" { python -m Guardian.stale_cache_cleaner }
-                "F" { python -m Guardian.log_watcher 24 }
-                "G" { python -c "from Guardian.db_manager import create_db; import json; print(json.dumps(create_db().get_trends(30), indent=2))" }
-                "H" { python -c "from Guardian.db_manager import create_db; import json; print(json.dumps(create_db().get_patterns(), indent=2))" }
+                "7" { python -c "from Guardian.modules.docker.docker_guardian import DockerGuardian; import json; print(json.dumps(DockerGuardian().get_disk_state().__dict__, indent=2, default=str))" }
+                "8" { python -c "from Guardian.modules.docker.docker_guardian import DockerGuardian; import json; r = DockerGuardian().prune(); print(json.dumps({'success': r.success, 'actions': r.actions, 'freed_gb': round(r.space_freed_gb,2), 'errors': r.errors}, indent=2))" }
+                "9" { python -m Guardian.modules.database.db_manager --history }
+                "A" { python -m Guardian.modules.services.service_health }
+                "B" { python -m Guardian.modules.services.ollama_monitor }
+                "C" { Write-Host 'Running disk report...'; python -m Guardian.modules.disk.disk_report }
+                "E" { python -m Guardian.modules.performance.stale_cache_cleaner }
+                "F" { python -m Guardian.modules.monitor.log_watcher 24 }
+                "J" { python -m Guardian.modules.memory.memory_pressure }
+                "G" { python -m Guardian.modules.database.db_manager --trends }
+                "H" { python -m Guardian.modules.database.db_manager --patterns }
                 "D" { 
-                    Start-Process -FilePath "python" -ArgumentList "-m Guardian.windows_guardian" -WindowStyle Hidden
+                    Start-Process -FilePath "$ScriptDir\guardian_daemon.cmd" -WindowStyle Hidden
                     Write-Host "Guardian started in background" -ForegroundColor Green
                 }
                 { $_ -in @("Q", "q") } { 
@@ -208,5 +214,5 @@ for h in hist[:15]:
 }
 
 if ($Background) {
-    Start-Process -FilePath "python" -ArgumentList "-m Guardian.windows_guardian" -WindowStyle Hidden
+    Start-Process -FilePath "$ScriptDir\guardian_daemon.cmd" -WindowStyle Hidden
 }

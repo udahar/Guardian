@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 from typing import Optional, List, Dict
 from datetime import datetime
 import json
+import os
 
 
 try:
@@ -105,11 +106,16 @@ class WindowsSensors:
 
     def _run_powershell(self, command: str, timeout: int = 30) -> tuple[bool, str]:
         try:
+            kwargs = {
+                "capture_output": True,
+                "text": True,
+                "timeout": timeout,
+            }
+            if os.name == "nt":
+                kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", command],
-                capture_output=True,
-                text=True,
-                timeout=timeout,
+                **kwargs,
             )
             return result.returncode == 0, result.stdout
         except Exception as e:

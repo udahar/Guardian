@@ -21,6 +21,7 @@ import urllib.error
 import json
 import subprocess
 import logging
+import os
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Set, Tuple
 from datetime import datetime
@@ -72,6 +73,9 @@ class OllamaReport:
     duplicate_loaded: List[str] = field(default_factory=list)  # models on >1 port at once
     total_vram_gb: float = 0.0
     process_count: int = 0
+    serve_process_count: int = 0
+    runner_process_count: int = 0
+    process_details: List[dict] = field(default_factory=list)
     alerts: List[str] = field(default_factory=list)
 
 
@@ -93,12 +97,40 @@ def _get_ollama_processes() -> List[dict]:
         )
         r = subprocess.run(
             ["powershell", "-NoProfile", "-Command", cmd],
-            capture_output=True, text=True, timeout=10
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
         )
         if not r.stdout.strip():
             return []
         data = json.loads(r.stdout.strip())
         # PowerShell returns object directly if single item, list if multiple
+        if isinstance(data, dict):
+            data = [data]
+        return data
+    except Exception:
+        return []
+
+
+def _get_ollama_process_details() -> List[dict]:
+    try:
+        cmd = (
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.Name -eq 'ollama.exe' } | "
+            "Select-Object ProcessId, ParentProcessId, CommandLine | "
+            "ConvertTo-Json -Compress"
+        )
+        r = subprocess.run(
+            ["powershell", "-NoProfile", "-Command", cmd],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
+        )
+        if not r.stdout.strip():
+            return []
+        data = json.loads(r.stdout.strip())
         if isinstance(data, dict):
             data = [data]
         return data
@@ -180,11 +212,31 @@ def scan() -> OllamaReport:
     # Ollama process count
     procs = _get_ollama_processes()
     report.process_count = len(procs)
+    report.process_details = _get_ollama_process_details()
+    serve_count = 0
+    runner_count = 0
+    for proc in report.process_details:
+        cmd = str(proc.get("CommandLine", "") or "").lower()
+        if " serve" in cmd:
+            serve_count += 1
+        elif " runner " in cmd or cmd.endswith(" runner"):
+            runner_count += 1
+    report.serve_process_count = serve_count
+    report.runner_process_count = runner_count
 
-    if report.process_count > 3:
+    if report.serve_process_count > len(OLLAMA_PORTS):
         msg = (
-            f"Unexpected: {report.process_count} ollama.exe processes running "
-            f"(expected ≤3 for 3 ports). Check for leaked instances."
+            f"Unexpected: {report.serve_process_count} Ollama serve processes running "
+            f"(expected {len(OLLAMA_PORTS)} for ports {sorted(OLLAMA_PORTS)}). Check for duplicated boot paths."
+        )
+        report.alerts.append(msg)
+        logger.warning(msg)
+
+    active_loaded = sum(len(ps.running) for ps in report.ports)
+    if report.runner_process_count > active_loaded:
+        msg = (
+            f"Unexpected: {report.runner_process_count} Ollama runner processes for "
+            f"{active_loaded} loaded model(s). Some runners may be leaked."
         )
         report.alerts.append(msg)
         logger.warning(msg)
@@ -214,6 +266,13 @@ def get_summary() -> Dict:
         "duplicate_loaded": report.duplicate_loaded,
         "total_vram_gb": report.total_vram_gb,
         "process_count": report.process_count,
+        "serve_process_count": report.serve_process_count,
+        "runner_process_count": report.runner_process_count,
+        "process_details": report.process_details,
+        "loaded_by_port": {
+            ps.label: [{"name": r.name, "size_gb": r.size_gb, "until": r.until} for r in ps.running]
+            for ps in report.ports
+        },
         "alerts": report.alerts,
     }
 

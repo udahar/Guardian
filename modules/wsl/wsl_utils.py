@@ -102,20 +102,48 @@ class WSLManager:
         return False
 
     def get_distro_path(self, distro: str) -> Optional[str]:
-        user = os.environ.get("USERNAME", "Unknown")
-        base_path = os.path.join(
-            os.environ.get("LOCALAPPDATA", ""),
-            "Packages",
-            f"CanonicalGroupLimited.{distro}*",
-            "LocalState",
-            "ext4.vhdx",
-        )
-
+        local_appdata = os.environ.get("LOCALAPPDATA", "")
         import glob
 
-        matches = glob.glob(base_path)
+        # New WSL path (Windows 11 23H2+): %LOCALAPPDATA%\wsl\{guid}\ext4.vhdx
+        # Map distro name via registry
+        try:
+            import winreg
+            key_path = r"SOFTWARE\Microsoft\Windows\CurrentVersion\Lxss"
+            with winreg.OpenKey(winreg.HKEY_CURRENT_USER, key_path) as lxss:
+                i = 0
+                while True:
+                    try:
+                        guid = winreg.EnumKey(lxss, i)
+                        with winreg.OpenKey(lxss, guid) as dk:
+                            try:
+                                name = winreg.QueryValueEx(dk, "DistributionName")[0]
+                                if name.lower() == distro.lower():
+                                    base = winreg.QueryValueEx(dk, "BasePath")[0]
+                                    candidate = os.path.join(base, "ext4.vhdx")
+                                    if os.path.exists(candidate):
+                                        return candidate
+                            except FileNotFoundError:
+                                pass
+                        i += 1
+                    except OSError:
+                        break
+        except Exception:
+            pass
+
+        # Legacy path (older Windows): %LOCALAPPDATA%\Packages\CanonicalGroup*\LocalState\ext4.vhdx
+        legacy = os.path.join(local_appdata, "Packages", f"CanonicalGroupLimited.{distro}*", "LocalState", "ext4.vhdx")
+        matches = glob.glob(legacy)
         if matches:
             return matches[0]
+
+        # Fallback: find any ext4.vhdx in the new wsl directory, pick largest
+        new_wsl_root = os.path.join(local_appdata, "wsl")
+        if os.path.isdir(new_wsl_root):
+            candidates = glob.glob(os.path.join(new_wsl_root, "*", "ext4.vhdx"))
+            if candidates:
+                return max(candidates, key=os.path.getsize)
+
         return None
 
     def get_disk_info(self, distro: str = None) -> Optional[WSLDiskInfo]:

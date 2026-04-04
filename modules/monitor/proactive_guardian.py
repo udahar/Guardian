@@ -344,7 +344,7 @@ class ProactiveGuardian:
         )
 
     def _attempt_docker_vhd_compact(self, disk: float, actions: List[str]) -> None:
-        """Compact Docker WSL VHD via diskpart — the real fix when sparse fails."""
+        """Prune Docker first, then compact VHD only if real slack remains."""
         if not self.vhd_compactor:
             return
 
@@ -353,10 +353,69 @@ class ProactiveGuardian:
             return
 
         try:
-            import psutil as _ps
+            prune_summary = None
+            docker_state = None
+            vhd_bloat_threshold = 1.0
+            reclaimable_threshold = 1.0
+
+            if self.docker_guardian:
+                try:
+                    state = self.docker_guardian.get_disk_state()
+                    if not state.error:
+                        docker_state = state
+                        vhd_bloat_threshold = max(
+                            1.0,
+                            float(getattr(self.docker_guardian, "vhd_bloat_alert_gb", 4.0) or 4.0),
+                        )
+                        reclaimable_threshold = max(
+                            1.0,
+                            float(getattr(self.docker_guardian, "cache_prune_threshold_gb", 3.0) or 3.0),
+                        )
+                except Exception as e:
+                    self.logger.warning(f"Docker state pre-check failed: {e}")
+
+            if docker_state and docker_state.docker_running and docker_state.total_reclaimable_gb >= reclaimable_threshold:
+                prune_result = self.docker_guardian.prune(aggressive=False)
+                prune_summary = {
+                    "success": prune_result.success,
+                    "space_freed_gb": round(prune_result.space_freed_gb, 2),
+                    "actions": prune_result.actions,
+                    "errors": prune_result.errors,
+                }
+                actions.append(f"docker_prune:{prune_result.space_freed_gb:.1f}GB")
+                if not prune_result.success:
+                    self.logger.warning(f"Docker prune before compact had errors: {prune_result.errors}")
+
+                try:
+                    refreshed = self.docker_guardian.get_disk_state()
+                    if not refreshed.error:
+                        docker_state = refreshed
+                except Exception as e:
+                    self.logger.warning(f"Docker state refresh after prune failed: {e}")
+
+            if docker_state and docker_state.vhd_bloat_gb < vhd_bloat_threshold:
+                actions.append("docker_vhd_compact_skipped")
+                self._mark_remediation_success(compact_key, cooldown_seconds=24 * 60 * 60)
+                self._notify_guardian(
+                    "INFO",
+                    "Docker prune completed; compact not needed",
+                    f"Guardian pruned Docker reclaimable content and re-measured the VHD. "
+                    f"Remaining slack is only {docker_state.vhd_bloat_gb:.1f}GB, below the compact threshold.",
+                    {
+                        "disk_percent": disk,
+                        "docker_state": {
+                            "vhd_file_gb": round(docker_state.vhd_file_gb, 2),
+                            "vhd_bloat_gb": round(docker_state.vhd_bloat_gb, 2),
+                            "total_reclaimable_gb": round(docker_state.total_reclaimable_gb, 2),
+                        },
+                        "prune_summary": prune_summary,
+                    },
+                    force=True,
+                )
+                return
+
             vhds = self.vhd_compactor.find_vhds()
             docker_vhds = [v for v in vhds if "Docker" in v.label]
-
             if not docker_vhds:
                 return
 
@@ -373,7 +432,7 @@ class ProactiveGuardian:
                 )()
                 if scheduled.get("success"):
                     actions.append("docker_vhd_compact_scheduled")
-                    self._mark_remediation_success(compact_key)
+                    self._mark_remediation_success(compact_key, cooldown_seconds=24 * 60 * 60)
                     self._notify_guardian(
                         "WARNING",
                         f"Docker VHD compact queued ({total_gb:.1f}GB total)",
@@ -383,6 +442,7 @@ class ProactiveGuardian:
                             "disk_percent": disk,
                             "docker_vhd_gb": round(total_gb, 1),
                             "task": scheduled.get("task_name"),
+                            "prune_summary": prune_summary,
                         },
                         force=True,
                     )
@@ -404,7 +464,7 @@ class ProactiveGuardian:
 
             if result.get("vhds_compacted", 0) > 0:
                 actions.append(f"docker_vhd_compact:{freed:.1f}GB")
-                self._mark_remediation_success(compact_key)
+                self._mark_remediation_success(compact_key, cooldown_seconds=24 * 60 * 60)
                 docker_restart = result.get("docker_restart", {}) or {}
                 self._notify_guardian(
                     "INFO",
@@ -415,6 +475,7 @@ class ProactiveGuardian:
                         "freed_gb": freed,
                         "disk_percent": disk,
                         "docker_restart": docker_restart,
+                        "prune_summary": prune_summary,
                     },
                     force=True,
                 )
@@ -427,9 +488,9 @@ class ProactiveGuardian:
             self._mark_remediation_failure(compact_key, str(e), base_cooldown_seconds=3600)
             self.logger.error(f"Docker VHD compact exception: {e}")
 
-    def _mark_remediation_success(self, key: str) -> None:
+    def _mark_remediation_success(self, key: str, cooldown_seconds: int = 0) -> None:
         self._remediation_state[key] = {
-            "cooldown_until": 0,
+            "cooldown_until": time.time() + max(0, int(cooldown_seconds)),
             "failures": 0,
             "last_error": None,
             "last_success_at": datetime.now().isoformat(),

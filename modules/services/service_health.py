@@ -58,7 +58,6 @@ SERVICES: List[ServiceDef] = [
     ServiceDef("Ollama local",      11434, "/api/tags",       optional=False),
     ServiceDef("Ollama cloud",      11436, "/api/tags",       optional=True),
     ServiceDef("Ollama embedding",  11437, "/api/tags",       optional=True),
-    ServiceDef("OllamaBot",         11435, "/",               optional=True,  check_tcp_only=True),
     ServiceDef("PostgreSQL",         5432, "",                optional=False, check_tcp_only=True),
     ServiceDef("Qdrant",             6333, "/healthz",        optional=True),
 ]
@@ -74,7 +73,7 @@ class ServiceHealthMonitor:
 
     def _try_init_telegram(self):
         try:
-            from Guardian.telegram_alerts import TelegramAlerts
+            from Guardian.modules.alerts.telegram_alerts import TelegramAlerts
             self._telegram = TelegramAlerts()
         except Exception:
             pass

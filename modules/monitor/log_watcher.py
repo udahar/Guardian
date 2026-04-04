@@ -118,9 +118,16 @@ def _classify(text: str) -> str:
 
 def _run_ps(cmd: str, timeout: int = 20) -> str:
     try:
+        kwargs = {
+            "capture_output": True,
+            "text": True,
+            "timeout": timeout,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         r = subprocess.run(
             ["powershell", "-NoProfile", "-Command", cmd],
-            capture_output=True, text=True, timeout=timeout
+            **kwargs,
         )
         return r.stdout.strip()
     except Exception:
@@ -129,9 +136,16 @@ def _run_ps(cmd: str, timeout: int = 20) -> str:
 
 def _run_wsl(cmd: str, timeout: int = 15) -> str:
     try:
+        kwargs = {
+            "capture_output": True,
+            "text": True,
+            "timeout": timeout,
+        }
+        if os.name == "nt":
+            kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0)
         r = subprocess.run(
             ["wsl", "-e", "bash", "-c", cmd],
-            capture_output=True, text=True, timeout=timeout
+            **kwargs,
         )
         return r.stdout.strip()
     except Exception:
@@ -253,7 +267,8 @@ def read_wsl_docker_logs() -> List[LogEvent]:
     try:
         r = subprocess.run(
             ["docker", "ps", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, text=True, timeout=5,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
         )
         if r.returncode != 0:
             return events
@@ -262,7 +277,8 @@ def read_wsl_docker_logs() -> List[LogEvent]:
         for name in containers[:8]:  # cap to avoid slowness
             r2 = subprocess.run(
                 ["docker", "logs", "--tail", "50", "--since", "1h", name],
-                capture_output=True, text=True, timeout=8
+                capture_output=True, text=True, timeout=8,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if os.name == "nt" else 0,
             )
             log_text = (r2.stdout + r2.stderr)
             for line in log_text.splitlines():

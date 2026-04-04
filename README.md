@@ -56,7 +56,7 @@ Detect problems → Diagnose cause → Apply fixes → Keep running
 
 ### Install dependencies
 
-pip install psutil wmi
+pip install git+https://github.com/udahar/PakMan.git
 
 ---
 

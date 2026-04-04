@@ -1,171 +1,120 @@
 #!/usr/bin/env python3
 """
-Guardian - Unified System Health Monitor
-PromptOS Module
+Guardian package.
 
-A comprehensive system health monitoring and maintenance package
-that combines Windows and WSL monitoring with diagnostics.
-
-Usage:
-    from Guardian import Guardian, run_diagnostics
-
-    # Quick health check
-    results = run_diagnostics(days=7)
-
-    # Start unified monitoring
-    guardian = Guardian()
-    guardian.start()
-
-    # Individual modules
-    from Guardian import WSLGuardian, WindowsGuardian, DiagnosticsEngine
+Keep top-level imports lazy so the package can bootstrap quickly for runtime
+entrypoints such as the supervisor, API server, and monitor daemon.
 """
 
-from Guardian.modules.wsl import (
-    WSLGuardian,
-    WSLConfig,
-    get_default_config as get_wsl_config,
-    create_guardian as create_wsl_guardian,
-)
+from __future__ import annotations
 
-from Guardian.modules.windows import (
-    WindowsGuardian,
-    WindowsConfig,
-    CleanupTarget,
-    get_default_config as get_windows_config,
-    create_guardian as create_windows_guardian,
-)
+from datetime import datetime
+import importlib
+import time
+from typing import Any
 
-from Guardian.modules.diagnostics import (
-    DiagnosticsEngine,
-    SystemDiagnostics,
-    DiagnosticIssue,
-    DiskHealth,
-    CrashInfo,
-    BootPerformance,
-    IssueCategory,
-    Severity,
-    run_diagnostics,
-)
 
-from Guardian.modules.services import (
-    AIGuardianBrain,
-    GuardianAI,
-    quick_ai_decision,
-    DecisionType,
-    Confidence,
-)
+_EXPORTS = {
+    "WSLGuardian": ("Guardian.modules.wsl", "WSLGuardian"),
+    "WSLConfig": ("Guardian.modules.wsl", "WSLConfig"),
+    "get_wsl_config": ("Guardian.modules.wsl", "get_default_config"),
+    "create_wsl_guardian": ("Guardian.modules.wsl", "create_guardian"),
+    "WindowsGuardian": ("Guardian.modules.windows", "WindowsGuardian"),
+    "WindowsConfig": ("Guardian.modules.windows", "WindowsConfig"),
+    "CleanupTarget": ("Guardian.modules.windows", "CleanupTarget"),
+    "get_windows_config": ("Guardian.modules.windows", "get_default_config"),
+    "create_windows_guardian": ("Guardian.modules.windows", "create_guardian"),
+    "DiagnosticsEngine": ("Guardian.modules.diagnostics", "DiagnosticsEngine"),
+    "SystemDiagnostics": ("Guardian.modules.diagnostics", "SystemDiagnostics"),
+    "DiagnosticIssue": ("Guardian.modules.diagnostics", "DiagnosticIssue"),
+    "DiskHealth": ("Guardian.modules.diagnostics", "DiskHealth"),
+    "CrashInfo": ("Guardian.modules.diagnostics", "CrashInfo"),
+    "BootPerformance": ("Guardian.modules.diagnostics", "BootPerformance"),
+    "IssueCategory": ("Guardian.modules.diagnostics", "IssueCategory"),
+    "Severity": ("Guardian.modules.diagnostics", "Severity"),
+    "run_diagnostics": ("Guardian.modules.diagnostics", "run_diagnostics"),
+    "AIGuardianBrain": ("Guardian.modules.services", "AIGuardianBrain"),
+    "GuardianAI": ("Guardian.modules.services", "GuardianAI"),
+    "quick_ai_decision": ("Guardian.modules.services", "quick_ai_decision"),
+    "DecisionType": ("Guardian.modules.services", "DecisionType"),
+    "Confidence": ("Guardian.modules.services", "Confidence"),
+    "WSLManager": ("Guardian.modules.wsl", "WSLManager"),
+    "shrink_wsl_disk": ("Guardian.modules.wsl", "shrink_wsl_disk"),
+    "optimize_wsl": ("Guardian.modules.wsl", "optimize_wsl"),
+    "GuardianDB": ("Guardian.modules.database", "GuardianDB"),
+    "InMemoryDB": ("Guardian.modules.database", "InMemoryDB"),
+    "create_db": ("Guardian.modules.database", "create_db"),
+    "LinuxSensors": ("Guardian.modules.sensors", "LinuxSensors"),
+    "WSLMemoryBalancer": ("Guardian.modules.sensors", "WSLMemoryBalancer"),
+    "ZombieProcessKiller": ("Guardian.modules.sensors", "ZombieProcessKiller"),
+    "get_linux_sensors": ("Guardian.modules.sensors", "get_linux_sensors"),
+    "WindowsSensors": ("Guardian.modules.sensors", "WindowsSensors"),
+    "ProcessGhostBuster": ("Guardian.modules.sensors", "ProcessGhostBuster"),
+    "get_windows_sensors": ("Guardian.modules.sensors", "get_windows_sensors"),
+    "NetworkMonitor": ("Guardian.modules.network", "NetworkMonitor"),
+    "get_network_status": ("Guardian.modules.network", "get_network_status"),
+    "HeartbeatLogger": ("Guardian.modules.monitor", "HeartbeatLogger"),
+    "create_logger": ("Guardian.modules.monitor", "create_logger"),
+    "ProactiveGuardian": ("Guardian.modules.monitor", "ProactiveGuardian"),
+    "GuardianConfig": ("Guardian.modules.monitor", "GuardianConfig"),
+    "create_guardian": ("Guardian.modules.monitor", "create_guardian"),
+    "PortScanner": ("Guardian.modules.network", "PortScanner"),
+    "get_port_scan": ("Guardian.modules.network", "get_port_scan"),
+    "LeakDetector": ("Guardian.modules.memory", "LeakDetector"),
+    "detect_leaks": ("Guardian.modules.memory", "detect_leaks"),
+    "TelegramAlerts": ("Guardian.modules.alerts", "TelegramAlerts"),
+    "TelegramConfig": ("Guardian.modules.alerts", "TelegramConfig"),
+    "create_telegram_alerts": ("Guardian.modules.alerts", "create_telegram_alerts"),
+    "AlertLevel": ("Guardian.modules.alerts", "AlertLevel"),
+    "PerformanceAdvisor": ("Guardian.modules.performance", "PerformanceAdvisor"),
+    "get_performance_suggestions": ("Guardian.modules.performance", "get_performance_suggestions"),
+    "SuggestionCategory": ("Guardian.modules.performance", "SuggestionCategory"),
+    "ImpactLevel": ("Guardian.modules.performance", "ImpactLevel"),
+    "get_wsl_summary": ("Guardian.modules.wsl", "get_wsl_summary"),
+    "SecurityMonitor": ("Guardian.modules.security", "SecurityMonitor"),
+    "get_security_report": ("Guardian.modules.security", "get_security_report"),
+    "SecurityLevel": ("Guardian.modules.security", "SecurityLevel"),
+    "DockerGuardian": ("Guardian.modules.docker", "DockerGuardian"),
+    "create_docker_guardian": ("Guardian.modules.docker", "create_docker_guardian"),
+    "ServiceHealthMonitor": ("Guardian.modules.services", "ServiceHealthMonitor"),
+    "ServiceDef": ("Guardian.modules.services", "ServiceDef"),
+    "get_service_monitor": ("Guardian.modules.services", "get_monitor"),
+    "scan_ollama": ("Guardian.modules.services", "scan"),
+    "OllamaReport": ("Guardian.modules.services", "OllamaReport"),
+    "check_docker_logs": ("Guardian.modules.docker", "check"),
+    "scan_disk": ("Guardian.modules.disk", "scan"),
+    "print_disk_report": ("Guardian.modules.disk", "print_report"),
+    "scan_caches": ("Guardian.modules.performance", "scan"),
+    "clean_caches": ("Guardian.modules.performance", "clean"),
+    "scan_logs": ("Guardian.modules.monitor", "scan"),
+    "get_log_summary": ("Guardian.modules.monitor", "get_summary"),
+}
 
-from Guardian.modules.wsl import (
-    WSLManager,
-    shrink_wsl_disk,
-    optimize_wsl,
-)
 
-from Guardian.modules.database import (
-    GuardianDB,
-    InMemoryDB,
-    create_db,
-)
-
-from Guardian.modules.sensors import (
-    LinuxSensors,
-    WSLMemoryBalancer,
-    ZombieProcessKiller,
-    get_linux_sensors,
-)
-
-from Guardian.modules.sensors import (
-    WindowsSensors,
-    ProcessGhostBuster,
-    get_windows_sensors,
-)
-
-from Guardian.modules.network import (
-    NetworkMonitor,
-    get_network_status,
-)
-
-from Guardian.modules.monitor import (
-    HeartbeatLogger,
-    create_logger,
-)
-
-from Guardian.modules.monitor import (
-    ProactiveGuardian,
-    GuardianConfig,
-    create_guardian,
-)
-
-from Guardian.modules.network import (
-    PortScanner,
-    get_port_scan,
-)
-
-from Guardian.modules.memory import (
-    LeakDetector,
-    detect_leaks,
-)
-
-from Guardian.modules.alerts import (
-    TelegramAlerts,
-    TelegramConfig,
-    create_telegram_alerts,
-    AlertLevel,
-)
-
-from Guardian.modules.performance import (
-    PerformanceAdvisor,
-    get_performance_suggestions,
-    SuggestionCategory,
-    ImpactLevel,
-)
-
-from Guardian.modules.wsl import (
-    WSLManager,
-    get_wsl_summary,
-)
-
-from Guardian.modules.security import (
-    SecurityMonitor,
-    get_security_report,
-    SecurityLevel,
-)
-
-from Guardian.modules.docker import DockerGuardian, create_docker_guardian
-from Guardian.modules.services import ServiceHealthMonitor, ServiceDef, get_monitor as get_service_monitor
-from Guardian.modules.services import scan as scan_ollama, OllamaReport
-from Guardian.modules.docker import check as check_docker_logs
-from Guardian.modules.disk import scan as scan_disk, print_report as print_disk_report
-from Guardian.modules.performance import scan as scan_caches, clean as clean_caches
-from Guardian.modules.monitor import scan as scan_logs, get_summary as get_log_summary
+def __getattr__(name: str) -> Any:
+    target = _EXPORTS.get(name)
+    if target is None:
+        raise AttributeError(f"module 'Guardian' has no attribute '{name}'")
+    module_name, attr_name = target
+    module = importlib.import_module(module_name)
+    value = getattr(module, attr_name)
+    globals()[name] = value
+    return value
 
 
 class Guardian:
     """
     Unified Guardian that monitors both Windows and WSL.
-
-    Monitors system resources and performs automatic maintenance
-    when thresholds are exceeded on either platform.
     """
 
-    def __init__(
-        self, wsl_config: WSLConfig = None, windows_config: WindowsConfig = None
-    ):
-        self.wsl_config = wsl_config or WSLConfig()
-        self.windows_config = windows_config or WindowsConfig()
-
-        self.wsl_guardian = WSLGuardian(self.wsl_config)
-        self.windows_guardian = WindowsGuardian(self.windows_config)
-
+    def __init__(self, wsl_config=None, windows_config=None):
+        self.wsl_config = wsl_config or __getattr__("WSLConfig")()
+        self.windows_config = windows_config or __getattr__("WindowsConfig")()
+        self.wsl_guardian = __getattr__("WSLGuardian")(self.wsl_config)
+        self.windows_guardian = __getattr__("WindowsGuardian")(self.windows_config)
         self._running = False
 
     def start(self, duration: int = None):
-        """
-        Start unified monitoring.
-
-        Args:
-            duration: Optional duration in seconds. If None, runs indefinitely.
-        """
         print("Guardian: Starting unified monitoring...")
         print(
             f"  Windows - RAM: {self.windows_config.ram_threshold}%, Disk: {self.windows_config.disk_threshold}%"
@@ -173,39 +122,23 @@ class Guardian:
         print(
             f"  WSL - RAM: {self.wsl_config.ram_threshold}%, Disk: {self.wsl_config.disk_threshold}%"
         )
-
         self._running = True
-        start_time = __import__("time").time()
-
+        start_time = time.time()
         while self._running:
-            # Check Windows
-            metrics, needs_healing, cleanup = self.windows_guardian.run_once(
-                self.wsl_guardian
-            )
-
+            _, needs_healing, cleanup = self.windows_guardian.run_once(self.wsl_guardian)
             if needs_healing:
-                print(
-                    f"Guardian: Windows cleanup triggered ({cleanup.space_freed_mb:.1f}MB freed)"
-                )
-
-            # Check duration
+                print(f"Guardian: Windows cleanup triggered ({cleanup.space_freed_mb:.1f}MB freed)")
             if duration and (time.time() - start_time) >= duration:
                 break
-
-            # Sleep
-            interval = min(
-                self.wsl_config.check_interval, self.windows_config.check_interval
-            )
+            interval = min(self.wsl_config.check_interval, self.windows_config.check_interval)
             time.sleep(interval)
 
     def stop(self):
-        """Stop monitoring."""
         self._running = False
         print("Guardian: Stopped")
 
 
 def quick_health_check() -> dict:
-    """Run a quick health check and return summary."""
     import psutil
 
     return {
@@ -218,13 +151,10 @@ def quick_health_check() -> dict:
 
 
 def cleanup_all():
-    """Run cleanup on both Windows and WSL."""
-    win_guard = WindowsGuardian()
-    wsl_guard = WSLGuardian()
-
+    win_guard = __getattr__("WindowsGuardian")()
+    wsl_guard = __getattr__("WSLGuardian")()
     win_result = win_guard.cleanup()
     wsl_result = wsl_guard.heal_wsl()
-
     return {
         "windows": {
             "success": win_result.success,
@@ -240,30 +170,4 @@ def cleanup_all():
     }
 
 
-import time
-from datetime import datetime
-
-
-__all__ = [
-    "Guardian",
-    "WSLGuardian",
-    "WindowsGuardian",
-    "DiagnosticsEngine",
-    "WSLConfig",
-    "WindowsConfig",
-    "CleanupTarget",
-    "SystemDiagnostics",
-    "DiagnosticIssue",
-    "DiskHealth",
-    "CrashInfo",
-    "BootPerformance",
-    "IssueCategory",
-    "Severity",
-    "run_diagnostics",
-    "quick_health_check",
-    "cleanup_all",
-    "get_wsl_config",
-    "get_windows_config",
-    "create_wsl_guardian",
-    "create_windows_guardian",
-]
+__all__ = ["Guardian", "quick_health_check", "cleanup_all", *_EXPORTS.keys()]

@@ -120,14 +120,35 @@ def scan(verbose: bool = False) -> DiskReport:
             ))
 
     # ── Docker & WSL VHDs ────────────────────────────────────────────────────
+    # Docker data VHD (docker_data.vhdx or docker-desktop-data.vhdx)
+    for vhd_candidate in [
+        LOCAL_APPDATA / "Docker" / "wsl" / "disk" / "docker_data.vhdx",
+        LOCAL_APPDATA / "Docker" / "wsl" / "disk" / "docker-desktop-data.vhdx",
+    ]:
+        if vhd_candidate.exists():
+            gb = _get_file_size_gb(vhd_candidate)
+            add(f"Docker VHD: {vhd_candidate.name}", vhd_candidate, gb, "docker",
+                reclaimable=True,
+                note="docker system prune -a, then compact: wsl --shutdown + diskpart")
+    # Also scan any other VHDs in the Docker wsl disk folder
     vhd_root = LOCAL_APPDATA / "Docker" / "wsl" / "disk"
     if vhd_root.exists():
         for vhd in vhd_root.glob("*.vhdx"):
-            gb = _get_file_size_gb(vhd)
-            add(f"Docker VHD: {vhd.name}", vhd, gb, "docker",
-                reclaimable=True,
-                note="Run docker system prune then compact_docker.bat as admin")
+            if vhd.name not in ("docker_data.vhdx", "docker-desktop-data.vhdx"):
+                gb = _get_file_size_gb(vhd)
+                add(f"Docker VHD: {vhd.name}", vhd, gb, "docker",
+                    reclaimable=True,
+                    note="Run docker system prune then diskpart compact")
 
+    # New WSL path (Windows 11 23H2+): %LOCALAPPDATA%\wsl\{guid}\ext4.vhdx
+    new_wsl_root = LOCAL_APPDATA / "wsl"
+    if new_wsl_root.exists():
+        for vhd in new_wsl_root.rglob("ext4.vhdx"):
+            gb = _get_file_size_gb(vhd)
+            add(f"WSL VHD ({vhd.parent.name[:30]})", vhd, gb, "wsl", reclaimable=True,
+                note="wsl --shutdown then diskpart compact vdisk")
+
+    # Legacy WSL path: %LOCALAPPDATA%\Packages\CanonicalGroup*\LocalState\ext4.vhdx
     wsl_pkg_root = LOCAL_APPDATA / "Packages"
     for pkg in wsl_pkg_root.glob("*CanonicalGroup*"):
         vhd = pkg / "LocalState" / "ext4.vhdx"
@@ -229,6 +250,20 @@ def scan(verbose: bool = False) -> DiskReport:
         if od.exists():
             add("OneDrive", od, _get_dir_size_gb(od, timeout=30), "user",
                 reclaimable=False, note="Cloud-synced — files may be local copies")
+
+    # ── Claude vm_bundles (Claude Code preview VM) ───────────────────────────
+    vm_bundles = APPDATA / "Claude" / "vm_bundles"
+    if vm_bundles.exists():
+        gb = _get_dir_size_gb(vm_bundles, timeout=15)
+        add("Claude vm_bundles", vm_bundles, gb, "user", reclaimable=True,
+            note="Close Claude desktop app, then delete this folder — re-downloads on demand")
+
+    # ── Claude Code task/session logs ─────────────────────────────────────────
+    claude_code_sessions = APPDATA / "Claude" / "claude-code-sessions"
+    if claude_code_sessions.exists():
+        gb = _get_dir_size_gb(claude_code_sessions, timeout=10)
+        add("Claude code sessions", claude_code_sessions, gb, "user", reclaimable=True,
+            note="Old session logs — safe to clear")
 
     # ── Ollama models ─────────────────────────────────────────────────────────
     ollama_models = USER_HOME / ".ollama" / "models"

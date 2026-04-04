@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
 """
-AI Guardian Brain - Ollama-Powered Decision Making
+AI Guardian Brain - Alfred-Powered Decision Making
 PromptOS Module
 
-Uses local LLM to analyze system state and make intelligent
-decisions about when and how to heal the system.
+Uses Alfred's governed model lane to analyze system state and make
+intelligent decisions about when and how to heal the system.
 
 Features:
 - Analyzes process list, resource usage, event logs
-- Uses Ollama for local AI inference
+- Uses alfred:latest through FieldBench routing
 - Pattern learning from past decisions
 - Explains reasoning behind actions
 """
@@ -87,10 +87,13 @@ class DecisionRecord:
 
 
 class AIGuardianBrain:
-    def __init__(self, ollama_url: str = "http://localhost:11434"):
-        self.ollama_url = ollama_url
+    def __init__(self, decision_url: str = None):
+        self.decision_url = decision_url or os.environ.get(
+            "ALFRED_GUARDIAN_DECISION_URL",
+            "http://127.0.0.1:4001/api/auth/guardian/decision",
+        )
         self.logger = self._setup_logging()
-        self.model = "llama3.2"  # Default model
+        self.model = os.environ.get("ALFRED_GUARDIAN_MODEL", "alfred:latest")
         self._decision_history: list[DecisionRecord] = []
 
     def _setup_logging(self) -> logging.Logger:
@@ -106,26 +109,17 @@ class AIGuardianBrain:
     def set_model(self, model: str):
         self.model = model
 
-    def is_ollama_available(self) -> bool:
+    def is_decision_service_available(self) -> bool:
         if not REQUESTS_AVAILABLE:
             return False
         try:
-            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
+            response = requests.get(self.decision_url.replace("/decision", "/status"), timeout=5)
             return response.status_code == 200
         except Exception:
             return False
 
     def get_available_models(self) -> list:
-        if not REQUESTS_AVAILABLE:
-            return []
-        try:
-            response = requests.get(f"{self.ollama_url}/api/tags", timeout=5)
-            if response.status_code == 200:
-                data = response.json()
-                return [m["name"] for m in data.get("models", [])]
-        except Exception:
-            pass
-        return []
+        return [self.model]
 
     def collect_system_snapshot(self, error_lines: int = 10) -> SystemSnapshot:
         cpu = psutil.cpu_percent(interval=1)
@@ -291,26 +285,33 @@ Respond ONLY with valid JSON, no other text:"""
         if snapshot is None:
             snapshot = self.collect_system_snapshot()
 
-        if not self.is_ollama_available():
+        if not self.is_decision_service_available():
             return self._fallback_decision(snapshot)
 
         prompt = self._build_prompt(snapshot)
 
         try:
             response = requests.post(
-                f"{self.ollama_url}/api/generate",
+                self.decision_url,
                 json={
                     "model": self.model,
                     "prompt": prompt,
-                    "stream": False,
-                    "format": "json",
+                    "snapshot": {
+                        "cpu_percent": snapshot.cpu_percent,
+                        "ram_percent": snapshot.ram_percent,
+                        "disk_percent": snapshot.disk_percent,
+                        "wsl_running": snapshot.wsl_running,
+                        "wsl_memory_mb": snapshot.wsl_memory_mb,
+                        "boot_time_days": snapshot.boot_time_days,
+                        "recent_errors": snapshot.recent_errors,
+                    },
                 },
                 timeout=60,
             )
 
             if response.status_code == 200:
                 result = response.json()
-                content = result.get("response", "{}")
+                content = result.get("response", result.get("decision_json", "{}"))
 
                 try:
                     decision_data = json.loads(content)
@@ -333,13 +334,13 @@ Respond ONLY with valid JSON, no other text:"""
                     self.logger.warning(f"Failed to parse AI response: {e}")
 
         except Exception as e:
-            self.logger.warning(f"Ollama request failed: {e}")
+            self.logger.warning(f"Alfred decision request failed: {e}")
 
         return self._fallback_decision(snapshot)
 
     def _fallback_decision(self, snapshot: SystemSnapshot) -> AIDecision:
         decision = DecisionType.MONITOR
-        reasoning = "Using rule-based fallback due to Ollama unavailable"
+        reasoning = "Using rule-based fallback due to Alfred unavailable"
 
         if snapshot.disk_percent > 95:
             decision = DecisionType.SHRINK_WSL
@@ -470,10 +471,10 @@ if __name__ == "__main__":
     parser.add_argument("--decision", action="store_true", help="Make AI decision")
     parser.add_argument("--history", action="store_true", help="Show decision history")
     parser.add_argument(
-        "--models", action="store_true", help="List available Ollama models"
+        "--models", action="store_true", help="List available Alfred models"
     )
     parser.add_argument(
-        "--model", type=str, default="llama3.2", help="Ollama model to use"
+        "--model", type=str, default="alfred:latest", help="Alfred model alias to use"
     )
 
     args = parser.parse_args()
@@ -482,7 +483,7 @@ if __name__ == "__main__":
 
     if args.models:
         models = ai.get_available_models()
-        print("Available Ollama models:")
+        print("Available Alfred models:")
         for m in models:
             print(f"  - {m}")
 
