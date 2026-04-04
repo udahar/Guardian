@@ -7,16 +7,21 @@ Monitors Docker disk usage and automatically:
 - Prunes build cache / dangling images when usage exceeds threshold
 - Tracks VHD bloat (file size vs actual data) and alerts
 - Cleans up stopped containers and dangling volumes
+- Configures Docker daemon for automatic log rotation
+- Manages Docker storage optimization
 
 Common culprits this was built to fight:
 - Build cache from iterative Crucible/Benchmark image rebuilds
 - Dangling images from failed builds
 - VHD file never auto-shrinks after prune (needs diskpart compact as admin)
+- Unrotated container logs filling up disk
 """
 
 import subprocess
 import json
 import logging
+import threading
+import time
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any
 from datetime import datetime
@@ -67,13 +72,76 @@ class DockerGuardian:
         images_warn_gb: float = 10.0,
         auto_prune: bool = True,
         vhd_path: Path = DOCKER_VHD_PATH,
+        enable_daemon_config: bool = True,
     ):
         self.cache_prune_threshold_gb = cache_prune_threshold_gb
         self.vhd_bloat_alert_gb = vhd_bloat_alert_gb
         self.images_warn_gb = images_warn_gb
         self.auto_prune = auto_prune
         self.vhd_path = vhd_path
+        self.enable_daemon_config = enable_daemon_config
         self.logger = logging.getLogger("DockerGuardian")
+        self._daemon_config = None
+        self._initialized = False
+
+    @property
+    def daemon_config(self):
+        """Lazy-load daemon configuration manager."""
+        if self._daemon_config is None:
+            try:
+                from Guardian.modules.docker.docker_daemon_config import (
+                    DockerDaemonConfig,
+                )
+
+                self._daemon_config = DockerDaemonConfig()
+            except ImportError:
+                self.logger.warning(
+                    "DockerDaemonConfig not available — daemon config features disabled"
+                )
+                self._daemon_config = False
+        return self._daemon_config if self._daemon_config else None
+
+    def initialize(self, restart_daemon: bool = False) -> Dict[str, Any]:
+        """Initialize Guardian and configure Docker daemon for auto-cleanup."""
+        result = {"success": False, "changes": [], "errors": []}
+
+        if not self.enable_daemon_config:
+            result["success"] = True
+            return result
+
+        if self._initialized:
+            result["success"] = True
+            return result
+
+        try:
+            config_mgr = self.daemon_config
+            if not config_mgr:
+                result["errors"].append(
+                    "Daemon config manager not available"
+                )
+                return result
+
+            # Configure log rotation to prevent disk bloat
+            config_result = config_mgr.configure_auto_cleanup(
+                enable_log_rotation=True,
+                max_log_size="10m",
+                max_log_files=3,
+                restart_daemon=restart_daemon,
+            )
+
+            result["success"] = config_result.get("success", False)
+            result["changes"].extend(config_result.get("changes", []))
+            result["errors"].extend(config_result.get("errors", []))
+
+            if config_result.get("daemon_restarted"):
+                result["daemon_restarted"] = True
+
+            self._initialized = True
+        except Exception as e:
+            self.logger.error(f"Error initializing daemon config: {e}")
+            result["errors"].append(str(e))
+
+        return result
 
     # ── Helpers ──────────────────────────────────────────────────────────────
 
@@ -182,9 +250,13 @@ class DockerGuardian:
         before = self.get_disk_state()
 
         # Standard: build cache + stopped containers + dangling images
-        ok, out, err = self._run(["docker", "system", "prune", "-f"], timeout=180)
+        ok, out, err = self._run(
+            ["docker", "system", "prune", "-f"], timeout=180
+        )
         if ok:
-            result.actions.append("pruned build cache + dangling images + stopped containers")
+            result.actions.append(
+                "pruned build cache + dangling images + stopped containers"
+            )
             self.logger.info(f"docker system prune: {out[:300]}")
         else:
             result.errors.append(f"docker system prune failed: {err[:200]}")
@@ -206,6 +278,42 @@ class DockerGuardian:
             + (before.images_size_gb - after.images_size_gb),
         )
         result.success = len(result.errors) == 0
+        return result
+
+    def prune_containers(self) -> DockerCleanupResult:
+        """Prune stopped containers only."""
+        result = DockerCleanupResult()
+
+        if not self._is_docker_running():
+            result.errors.append("Docker not running")
+            return result
+
+        ok, out, err = self._run(["docker", "container", "prune", "-f"], timeout=60)
+        if ok:
+            result.actions.append("pruned stopped containers")
+            self.logger.info(f"container prune: {out[:200]}")
+            result.success = True
+        else:
+            result.errors.append(f"container prune failed: {err[:100]}")
+
+        return result
+
+    def prune_volumes(self) -> DockerCleanupResult:
+        """Prune dangling volumes."""
+        result = DockerCleanupResult()
+
+        if not self._is_docker_running():
+            result.errors.append("Docker not running")
+            return result
+
+        ok, out, err = self._run(["docker", "volume", "prune", "-f"], timeout=60)
+        if ok:
+            result.actions.append("pruned dangling volumes")
+            self.logger.info(f"volume prune: {out[:200]}")
+            result.success = True
+        else:
+            result.errors.append(f"volume prune failed: {err[:100]}")
+
         return result
 
     # ── Main check ────────────────────────────────────────────────────────────
@@ -247,7 +355,7 @@ class DockerGuardian:
                 f"Docker VHD bloat {state.vhd_bloat_gb:.1f}GB "
                 f"(file={state.vhd_file_gb:.1f}GB, "
                 f"data~{state.vhd_file_gb - state.vhd_bloat_gb:.1f}GB). "
-                f"Run compact_docker.bat as Administrator to reclaim."
+                f"Guardian should compact this automatically via its elevated compact task."
             )
 
         return {
@@ -279,5 +387,11 @@ if __name__ == "__main__":
 
     logging.basicConfig(level=logging.INFO)
     guardian = DockerGuardian()
+    
+    print("Initializing Docker Guardian...")
+    init_result = guardian.initialize(restart_daemon=False)
+    print(_json.dumps(init_result, indent=2))
+    
+    print("\nChecking Docker health...")
     result = guardian.check_and_heal()
     print(_json.dumps(result, indent=2))
