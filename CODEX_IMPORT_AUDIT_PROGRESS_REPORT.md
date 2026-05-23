@@ -616,7 +616,129 @@ Every Guardian egg now has:
 
 ### Remaining Upgrade Work
 
-- Build a single Guardian supervisor/status page or dashboard egg that aggregates all seven `/api/guardian/status` endpoints.
 - Add tests for alert SQLite persistence and Telegram-not-configured behavior.
 - Add DB-backed retention/cooldown policy so scan logs do not grow forever.
 - Add a richer action schema: risk, admin requirement, planned paths, estimated freed bytes, execution cooldown, and last result.
+
+## 2026-05-23 Follow-Up Repair Pass: Guardian Supervisor Egg
+
+Richard asked for the remaining reporting work to continue and for the report to stay current for Claude. This pass adds a supervisor egg that can be used by a human or AI to audit the Guardian set from one place.
+
+### Files Added
+
+- `eggs/system-guardian-supervisor-v1/egg.toml`
+- `eggs/system-guardian-supervisor-v1/behavior/contract.feature`
+- `eggs/system-guardian-supervisor-v1/logic/main.cbl`
+- `eggs/system-guardian-supervisor-v1/memory/egg_state.sql`
+- `eggs/system-guardian-supervisor-v1/runtime/main.go`
+- `eggs/system-guardian-supervisor-v1/runtime/scanner.go`
+- `eggs/system-guardian-supervisor-v1/runtime/db.go`
+- `eggs/system-guardian-supervisor-v1/runtime/html.go`
+- `eggs/system-guardian-supervisor-v1/runtime/status.html`
+- `eggs/system-guardian-supervisor-v1/runtime/scanner_test.go`
+- `eggs/system-guardian-supervisor-v1/runtime/go.mod`
+- `eggs/system-guardian-supervisor-v1/runtime/go.sum`
+
+### Repairs Applied
+
+| Problem | Root Cause | Fix | Prevention Rule |
+|---|---|---|---|
+| Guardian had per-egg status but no single audit surface | Each egg exposed its own HTML/API | Added `system-guardian-supervisor-v1` on port `18947` | Multi-egg systems need one read-only operator summary |
+| Aggregation could have become HTTP-to-HTTP glue | Easy path would poll every child API | Supervisor reads sibling `memory/egg_state.db` files directly and only uses TCP liveness checks | Internal status aggregation should prefer local SQLite/file state |
+| Supervisor activity was not durable | No supervisor memory schema existed | Added `supervisor_scans` table with aggregate JSON | Supervisor audits should leave a trail |
+| Human dashboard was missing | Previous HTML existed per child egg only | Added supervisor `runtime/status.html` at `/` and `/guardian.html` | Human status pages should be thin renderers over JSON status |
+| No tests existed for supervisor helpers | New scanner code needed basic regression checks | Added tests for identifier quoting and supervisor port registration | SQLite helper safety should be tested |
+
+### Supervisor Behavior
+
+`system-guardian-supervisor-v1` is read-only.
+
+It reports:
+
+- Guardian egg IDs
+- expected ports
+- whether each port is listening on `127.0.0.1`
+- whether each sibling SQLite database exists
+- tables in each SQLite database
+- table row counts
+- latest `created_at` activity where available
+
+It writes:
+
+- `memory/egg_state.db`
+- `supervisor_scans`
+
+It does not:
+
+- clean files
+- prune Docker
+- reclaim WSL memory
+- heal WSL distros
+- delete temp files
+
+### Endpoints
+
+- `GET /`
+- `GET /guardian.html`
+- `GET /health`
+- `GET /api/guardian/status`
+
+### Verification
+
+All Guardian runtime eggs compile and test:
+
+- `system-guardian-alerts-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-docker-v1/runtime`: `go test ./...` passes
+- `system-guardian-health-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-network-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-perf-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-security-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-supervisor-v1/runtime`: `go test ./...` passes
+- `system-guardian-wsl-v1/runtime`: `go test ./...` passes
+
+### Remaining Upgrade Work
+
+- Add cooldown policy so repeated alerts/actions cannot spam the machine.
+- Add richer action metadata shared by cleanup-capable eggs: risk, admin requirement, planned paths, estimated freed bytes, execution cooldown, and last result.
+- Add a launch routine that starts the Guardian set in dependency order.
+- Add a safe action review queue so cleanup requests can be approved after audit instead of executing directly.
+
+## 2026-05-23 Follow-Up Repair Pass: Retention And Alert Tests
+
+### Files Changed
+
+- `eggs/system-guardian-alerts-v1/runtime/db.go`
+- `eggs/system-guardian-alerts-v1/runtime/alerter_test.go`
+- `eggs/system-guardian-docker-v1/runtime/db.go`
+- `eggs/system-guardian-wsl-v1/runtime/db.go`
+- `eggs/system-guardian-supervisor-v1/runtime/db.go`
+
+### Repairs Applied
+
+| Problem | Root Cause | Fix | Prevention Rule |
+|---|---|---|---|
+| SQLite logs could grow forever | Insert paths had no retention policy | Added bounded retention to alerts, Docker disk/prune logs, WSL distro/VHD/heal logs, and supervisor scans | Every recurring scan log needs a retention cap |
+| Alert behavior had no tests | Alerts egg initially had no test files | Added tests for Telegram-not-configured and severity routing | Alert routing should be regression tested |
+
+### Retention Caps
+
+- `alerts_sent`: keeps newest 500 rows
+- `docker_disk_state`: keeps newest 1000 rows
+- `prune_history`: keeps newest 1000 rows
+- `wsl_distros`: keeps newest 1000 rows
+- `vhd_snapshots`: keeps newest 1000 rows
+- `heal_ops`: keeps newest 1000 rows
+- `supervisor_scans`: keeps newest 1000 rows
+
+### Verification
+
+All Guardian runtime eggs compile and test:
+
+- `system-guardian-alerts-v1/runtime`: `go test ./...` passes
+- `system-guardian-docker-v1/runtime`: `go test ./...` passes
+- `system-guardian-health-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-network-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-perf-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-security-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-supervisor-v1/runtime`: `go test ./...` passes
+- `system-guardian-wsl-v1/runtime`: `go test ./...` passes
