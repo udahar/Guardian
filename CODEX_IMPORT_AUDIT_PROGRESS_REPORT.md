@@ -700,8 +700,58 @@ All Guardian runtime eggs compile and test:
 
 - Add cooldown policy so repeated alerts/actions cannot spam the machine.
 - Add richer action metadata shared by cleanup-capable eggs: risk, admin requirement, planned paths, estimated freed bytes, execution cooldown, and last result.
-- Add a launch routine that starts the Guardian set in dependency order.
 - Add a safe action review queue so cleanup requests can be approved after audit instead of executing directly.
+
+## 2026-05-23 Follow-Up Repair Pass: Guardian Launch Scripts
+
+### Files Added
+
+- `eggs/system-guardian-supervisor-v1/runtime/launch_guardian.ps1`
+- `eggs/system-guardian-supervisor-v1/runtime/stop_guardian.ps1`
+
+### Repairs Applied
+
+| Problem | Root Cause | Fix | Prevention Rule |
+|---|---|---|---|
+| Guardian had no simple startup routine | Eggs were individually runnable but not operationally grouped | Added `launch_guardian.ps1` to start all Guardian runtimes in dependency order | Multi-egg systems need one operator launch command |
+| Started PIDs would be hard to audit/stop | No PID manifest existed | Launcher writes `memory/guardian_pids.json` | Launch routines should emit machine-readable process records |
+| No matching stop routine existed | Starting services without stop bookkeeping causes process sprawl | Added `stop_guardian.ps1` that stops PIDs from the manifest | Any launcher should have a matching stopper |
+
+### Launch Order
+
+1. `system-guardian-health-v1`
+2. `system-guardian-network-v1`
+3. `system-guardian-perf-v1`
+4. `system-guardian-security-v1`
+5. `system-guardian-wsl-v1`
+6. `system-guardian-docker-v1`
+7. `system-guardian-alerts-v1`
+8. `system-guardian-supervisor-v1`
+
+### Usage
+
+Dry run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\runtime\launch_guardian.ps1 -DryRun
+```
+
+Start hidden windows:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\runtime\launch_guardian.ps1 -NoWindow
+```
+
+Stop launched Guardian processes:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File .\runtime\stop_guardian.ps1
+```
+
+### Verification
+
+- `launch_guardian.ps1 -DryRun` succeeds and lists all eight Guardian eggs as planned.
+- Full Guardian `go test ./...` pass was run immediately before this launcher fix.
 
 ## 2026-05-23 Follow-Up Repair Pass: Retention And Alert Tests
 
