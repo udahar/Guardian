@@ -699,8 +699,77 @@ All Guardian runtime eggs compile and test:
 ### Remaining Upgrade Work
 
 - Add cooldown policy so repeated alerts/actions cannot spam the machine.
-- Wire Docker and WSL cleanup-capable eggs to submit dry-run proposals into the supervisor action queue.
 - Add execution workers that only act on approved queue rows.
+
+## 2026-05-23 Follow-Up Repair Pass: Docker And WSL Queue Producers
+
+### Files Changed
+
+- `eggs/system-guardian-docker-v1/runtime/actions.go`
+- `eggs/system-guardian-docker-v1/runtime/main.go`
+- `eggs/system-guardian-docker-v1/runtime/main_test.go`
+- `eggs/system-guardian-wsl-v1/runtime/actions.go`
+- `eggs/system-guardian-wsl-v1/runtime/main.go`
+- `eggs/system-guardian-wsl-v1/runtime/reclaim.go`
+- `eggs/system-guardian-wsl-v1/runtime/main_test.go`
+
+### Repairs Applied
+
+| Problem | Root Cause | Fix | Prevention Rule |
+|---|---|---|---|
+| Docker prune plans could not enter the approval queue | Queue producer existed only in perf cleaner | Added Docker prune proposal producer | Every cleanup-capable egg should be able to propose, not just execute |
+| WSL heal/reclaim plans could not enter the approval queue | WSL handlers only returned local JSON | Added WSL heal and reclaim proposal producers | WSL maintenance needs the same review flow as disk cleanup |
+| Queue parsing was not standardized | Existing request parsing only handled `dry_run` | Added `queue` support via JSON or query string | Dry-run plus queue should be a consistent Guardian pattern |
+| Queue producer URLs were not tested | New network path could silently drift | Added default supervisor URL tests | Action queue producer endpoints should be regression tested |
+
+### Usage
+
+Queue Docker prune proposals without executing:
+
+```http
+POST /api/guardian/docker-prune
+Content-Type: application/json
+
+{"dry_run": true, "queue": true}
+```
+
+Queue WSL heal proposals without executing:
+
+```http
+POST /api/guardian/wsl-heal
+Content-Type: application/json
+
+{"dry_run": true, "queue": true}
+```
+
+Queue WSL reclaim proposals without executing:
+
+```http
+POST /api/guardian/wsl-reclaim
+Content-Type: application/json
+
+{"dry_run": true, "queue": true}
+```
+
+All three paths:
+
+- keep files/processes untouched
+- log their local dry-run/plan state
+- submit approval queue rows to the supervisor
+- require later approval and an execution worker before real action happens
+
+### Verification
+
+All Guardian runtime eggs compile and test:
+
+- `system-guardian-alerts-v1/runtime`: `go test ./...` passes
+- `system-guardian-docker-v1/runtime`: `go test ./...` passes
+- `system-guardian-health-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-network-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-perf-v1/runtime`: `go test ./...` passes
+- `system-guardian-security-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-supervisor-v1/runtime`: `go test ./...` passes
+- `system-guardian-wsl-v1/runtime`: `go test ./...` passes
 
 ## 2026-05-23 Follow-Up Repair Pass: Perf Clean Queue Producer
 
