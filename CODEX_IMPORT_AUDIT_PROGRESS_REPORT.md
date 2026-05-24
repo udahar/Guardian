@@ -698,8 +698,64 @@ All Guardian runtime eggs compile and test:
 
 ### Remaining Upgrade Work
 
-- Add cooldown policy so repeated alerts/actions cannot spam the machine.
-- Add execution workers that only act on approved queue rows.
+- Add cancellation/rejection endpoint for queued actions.
+- Add per-action richer result parsing for cleanup/prune/reclaim responses.
+
+## 2026-05-23 Follow-Up Repair Pass: Approved Action Executor
+
+### Files Changed
+
+- `eggs/system-guardian-supervisor-v1/memory/egg_state.sql`
+- `eggs/system-guardian-supervisor-v1/runtime/main.go`
+- `eggs/system-guardian-supervisor-v1/runtime/db.go`
+- `eggs/system-guardian-supervisor-v1/runtime/executor.go`
+- `eggs/system-guardian-supervisor-v1/runtime/scanner_test.go`
+
+### Repairs Applied
+
+| Problem | Root Cause | Fix | Prevention Rule |
+|---|---|---|---|
+| Approved actions had no execution path | Queue stopped at approval | Added `POST /api/guardian/actions/execute` | Execution must happen only after approval |
+| Execution could become arbitrary HTTP glue | Queue stores JSON payloads | Added hard allowlist mapping action types to known local Guardian endpoints | Never execute arbitrary URLs from queue rows |
+| Repeated actions could spam cleanup endpoints | No cooldown existed | Added 30-minute per-target dispatch cooldown | Action execution needs anti-spam protection |
+| Dispatch results were not durable | Queue rows had approval fields only | Added `dispatched_at` and `result_json` | Execution results must be auditable |
+| Unknown action types were unsafe ambiguity | No explicit unsupported path existed | Unknown actions return `unsupported` and are not marked dispatched | Unknown action types must fail closed |
+
+### Executor API
+
+Execute currently approved actions:
+
+```http
+POST /api/guardian/actions/execute
+```
+
+Supported action types:
+
+- `clean` -> `http://127.0.0.1:18942/api/guardian/clean`
+- `docker-prune` -> `http://127.0.0.1:18945/api/guardian/docker-prune`
+- `wsl-heal` -> `http://127.0.0.1:18944/api/guardian/wsl-heal`
+- `wsl-reclaim` -> `http://127.0.0.1:18944/api/guardian/wsl-reclaim`
+
+Safety behavior:
+
+- only rows with `status='approved'` are considered
+- unknown action types are skipped as `unsupported`
+- per-target cooldown is 30 minutes
+- dispatched rows become `status='dispatched'`
+- raw execution response is stored in `result_json`
+
+### Verification
+
+All Guardian runtime eggs compile and test:
+
+- `system-guardian-alerts-v1/runtime`: `go test ./...` passes
+- `system-guardian-docker-v1/runtime`: `go test ./...` passes
+- `system-guardian-health-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-network-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-perf-v1/runtime`: `go test ./...` passes
+- `system-guardian-security-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-supervisor-v1/runtime`: `go test ./...` passes
+- `system-guardian-wsl-v1/runtime`: `go test ./...` passes
 
 ## 2026-05-23 Follow-Up Repair Pass: Docker And WSL Queue Producers
 
