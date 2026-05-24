@@ -699,8 +699,65 @@ All Guardian runtime eggs compile and test:
 ### Remaining Upgrade Work
 
 - Add cooldown policy so repeated alerts/actions cannot spam the machine.
-- Wire cleanup-capable eggs to submit dry-run proposals into the supervisor action queue.
+- Wire Docker and WSL cleanup-capable eggs to submit dry-run proposals into the supervisor action queue.
 - Add execution workers that only act on approved queue rows.
+
+## 2026-05-23 Follow-Up Repair Pass: Perf Clean Queue Producer
+
+### Files Changed
+
+- `eggs/system-guardian-perf-v1/runtime/cleaner.go`
+- `eggs/system-guardian-perf-v1/runtime/cleaner_test.go`
+
+### Repairs Applied
+
+| Problem | Root Cause | Fix | Prevention Rule |
+|---|---|---|---|
+| Approval queue existed but no cleanup egg produced proposals | Supervisor queue was added first to keep execution separate | Added explicit perf cleaner queue mode | Dry-run producers should submit reviewable actions without executing |
+| Queuing could have become noisy | Automatic scans could spam the action queue | Queue submission only happens when request has `queue: true` and `dry_run` is true | Queue creation must be intentional |
+| Admin risk was not surfaced for cleanup targets | Target metadata had risk but no admin flag | Added `requires_admin` detection for `C:\Windows` and `C:\ProgramData` targets | Approval metadata should expose privilege needs |
+| Queue endpoint URL was hard-coded without tests | Env override was needed for future supervisor moves | Added `GUARDIAN_SUPERVISOR_ACTIONS_URL` override and tests | Local control endpoints should be configurable |
+
+### Usage
+
+Queue cleanup proposals from the perf egg without executing:
+
+```http
+POST /api/guardian/clean
+Content-Type: application/json
+
+{
+  "targets": ["windows-temp", "prefetch"],
+  "dry_run": true,
+  "queue": true
+}
+```
+
+This will:
+
+- calculate estimated freed space
+- write normal `clean_ops` dry-run records
+- POST one proposal per non-empty target to the supervisor action queue
+- leave all files untouched
+
+It will not:
+
+- delete files
+- mark actions approved
+- execute approved actions
+
+### Verification
+
+All Guardian runtime eggs compile and test:
+
+- `system-guardian-alerts-v1/runtime`: `go test ./...` passes
+- `system-guardian-docker-v1/runtime`: `go test ./...` passes
+- `system-guardian-health-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-network-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-perf-v1/runtime`: `go test ./...` passes
+- `system-guardian-security-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-supervisor-v1/runtime`: `go test ./...` passes
+- `system-guardian-wsl-v1/runtime`: `go test ./...` passes
 
 ## 2026-05-23 Follow-Up Repair Pass: Action Approval Queue
 
