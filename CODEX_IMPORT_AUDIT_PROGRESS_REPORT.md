@@ -698,8 +698,51 @@ All Guardian runtime eggs compile and test:
 
 ### Remaining Upgrade Work
 
-- Add cancellation/rejection endpoint for queued actions.
 - Add per-action richer result parsing for cleanup/prune/reclaim responses.
+- Add CSRF/local-operator guard before exposing supervisor outside localhost.
+
+## 2026-05-23 Follow-Up Repair Pass: Queue Rejection And Dashboard Controls
+
+### Files Changed
+
+- `eggs/system-guardian-supervisor-v1/runtime/actions.go`
+- `eggs/system-guardian-supervisor-v1/runtime/db.go`
+- `eggs/system-guardian-supervisor-v1/runtime/main.go`
+- `eggs/system-guardian-supervisor-v1/runtime/status.html`
+- `eggs/system-guardian-supervisor-v1/runtime/scanner_test.go`
+
+### Repairs Applied
+
+| Problem | Root Cause | Fix | Prevention Rule |
+|---|---|---|---|
+| Approved/pending actions could not be rejected | Queue lifecycle only had approve and execute | Added `POST /api/guardian/actions/reject` | Review queues need reject/cancel paths |
+| Dashboard showed status only | Operator had to hand-write queue API calls | Added action queue panel to supervisor HTML | Operator pages should expose safe controls for common workflow |
+| Execution workflow was API-only | No UI trigger for approved actions | Added `Execute Approved` dashboard button | The human audit page should be usable without memorizing endpoints |
+| Queue UI could not inspect actions | HTML only showed egg status | Added latest 20 queue rows with status/risk/admin/estimate | Review pages must show risk context before approval |
+
+### Dashboard Controls
+
+Supervisor `runtime/status.html` now supports:
+
+- listing recent actions
+- approving pending actions
+- rejecting pending or approved actions
+- executing approved actions
+
+The dashboard still relies on the same JSON endpoints and does not bypass the approval queue.
+
+### Verification
+
+All Guardian runtime eggs compile and test:
+
+- `system-guardian-alerts-v1/runtime`: `go test ./...` passes
+- `system-guardian-docker-v1/runtime`: `go test ./...` passes
+- `system-guardian-health-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-network-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-perf-v1/runtime`: `go test ./...` passes
+- `system-guardian-security-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-supervisor-v1/runtime`: `go test ./...` passes
+- `system-guardian-wsl-v1/runtime`: `go test ./...` passes
 
 ## 2026-05-23 Follow-Up Repair Pass: Approved Action Executor
 
