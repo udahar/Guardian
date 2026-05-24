@@ -699,8 +699,74 @@ All Guardian runtime eggs compile and test:
 ### Remaining Upgrade Work
 
 - Add cooldown policy so repeated alerts/actions cannot spam the machine.
-- Add richer action metadata shared by cleanup-capable eggs: risk, admin requirement, planned paths, estimated freed bytes, execution cooldown, and last result.
-- Add a safe action review queue so cleanup requests can be approved after audit instead of executing directly.
+- Wire cleanup-capable eggs to submit dry-run proposals into the supervisor action queue.
+- Add execution workers that only act on approved queue rows.
+
+## 2026-05-23 Follow-Up Repair Pass: Action Approval Queue
+
+### Files Changed
+
+- `eggs/system-guardian-supervisor-v1/memory/egg_state.sql`
+- `eggs/system-guardian-supervisor-v1/runtime/main.go`
+- `eggs/system-guardian-supervisor-v1/runtime/db.go`
+- `eggs/system-guardian-supervisor-v1/runtime/actions.go`
+- `eggs/system-guardian-supervisor-v1/runtime/scanner_test.go`
+
+### Repairs Applied
+
+| Problem | Root Cause | Fix | Prevention Rule |
+|---|---|---|---|
+| Cleanup actions had no common approval queue | Eggs could plan or execute locally, but there was no shared operator review surface | Added `action_queue` table to supervisor SQLite | Cleanup-capable eggs should propose actions before execution |
+| No API existed for AI/operator approval | Supervisor only reported status | Added `GET/POST /api/guardian/actions` and `POST /api/guardian/actions/approve` | Approval should be explicit and auditable |
+| Action metadata was not normalized | Target metadata lived inside each egg | Added queue fields for source egg, action type, target ID, risk, admin requirement, estimated freed GB, payload JSON, and status | Planned actions need a stable review schema |
+| Approval could become accidental execution | Queue and execution were not separated | This pass only stores and approves rows; no worker consumes approved rows yet | Approval and execution must be separate phases |
+
+### Action Queue API
+
+Create a pending action:
+
+```http
+POST /api/guardian/actions
+Content-Type: application/json
+
+{
+  "source_egg": "system-guardian-perf-v1",
+  "action_type": "clean",
+  "target_id": "windows-temp",
+  "risk": "safe",
+  "requires_admin": false,
+  "estimated_freed_gb": 1.25,
+  "payload_json": "{\"targets\":[\"windows-temp\"],\"dry_run\":false}"
+}
+```
+
+List pending actions:
+
+```http
+GET /api/guardian/actions?status=pending
+```
+
+Approve an action:
+
+```http
+POST /api/guardian/actions/approve
+Content-Type: application/json
+
+{"id": 1, "approved_by": "Richard"}
+```
+
+### Verification
+
+All Guardian runtime eggs compile and test:
+
+- `system-guardian-alerts-v1/runtime`: `go test ./...` passes
+- `system-guardian-docker-v1/runtime`: `go test ./...` passes
+- `system-guardian-health-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-network-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-perf-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-security-v1/runtime`: `go test ./...` passes, no test files
+- `system-guardian-supervisor-v1/runtime`: `go test ./...` passes
+- `system-guardian-wsl-v1/runtime`: `go test ./...` passes
 
 ## 2026-05-23 Follow-Up Repair Pass: Guardian Launch Scripts
 
